@@ -1,0 +1,22 @@
+{
+  "proxy": {
+    "/api/list": {
+      "target": "http://localhost:8181",
+      "pathRewrite": {
+        "^/api": ""
+      }
+    },
+    "/api/add": {
+      "target": "http://localhost:8181",
+      "pathRewrite": {
+        "^/api": ""
+      }
+    },
+    "/api/coords": {
+      "target": "http://localhost:8181",
+      "pathRewrite": {
+        "^/api": ""
+      }
+    }
+  }
+}
