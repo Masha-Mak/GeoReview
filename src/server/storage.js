@@ -19,7 +19,13 @@ class Storage {
   }
 
   validateReview(review) {
-    if (!review || !review.name || !review.place || !review.text) {
+    if (
+      !review ||
+      !review.name ||
+      !review.place ||
+      !review.text ||
+      !review.date
+    ) {
       throw new Error("Invalid review data");
     }
   }
@@ -31,6 +37,7 @@ class Storage {
   add(data) {
     this.validateCoords(data.coords);
     this.validateReview(data.review);
+
     const index = this.getIndex(data.coords);
     this.data[index] = this.data[index] || [];
     this.data[index].push(data.review);

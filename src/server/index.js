@@ -20,6 +20,7 @@ function end(res, data, statusCode = 200) {
 
 function createServer() {
   const storage = new Storage();
+  console.log("Server started");
 
   http
     .createServer(async (req, res) => {
@@ -44,6 +45,7 @@ function createServer() {
           end(res, {});
         }
       } catch (e) {
+        console.log(e.message);
         end(res, { error: { message: e.message } }, 500);
       }
     })

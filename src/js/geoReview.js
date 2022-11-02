@@ -1,28 +1,167 @@
-import InteractiveMap from "./interactiveMap";
-
-export default class GeoReview {
-  constructor() {
+export default class App {
+  constructor(mapId) {
+    this.mapId = mapId;
+    this.currentCoords = [0, 0];
+    this.currentId = 0;
     this.formTemplate = document.querySelector("#addFormTemplate").innerHTML;
-    this.map = new InteractiveMap("map", this.onClick.bind(this));
-    this.map.init().then(this.onInit.bind(this));
+
+    this.injectYMaps();
   }
 
-  async onInit() {
-    let coords = [];
+  onInit() {
+    this.map = new ymaps.Map(this.mapId, {
+      center: [55.23, 37.21],
+      zoom: 8,
+      controls: ["zoomControl"],
+    });
 
-    try {
-      coords = await this.callApi("coords");
-    } catch (error) {
-      console.error("Failed to fetch coordinates");
+    this.map.events.add("click", this.onClick.bind(this));
+    document.addEventListener("click", this.onDocumentClick.bind(this));
+
+    const openBalloon = this.openBalloon.bind(this);
+    const customBalloonContentLayout = ymaps.templateLayoutFactory.createClass(
+      `
+      <div class="balloon">
+        <a href="#" class="balloon-address">{{properties.data.address}}</a>
+        <div>
+          <b>{{properties.data.name}}</b> <i>{{properties.data.date}}</i> [{{properties.data.place}}]
+        </div>
+        <div>{{properties.data.text}}</div>
+      </div>
+    `,
+      {
+        build() {
+          this.constructor.superclass.build.call(this);
+
+          const link = this._element.querySelector(".balloon-address");
+          link.addEventListener("click", (e) => {
+            e.preventDefault();
+
+            const obj = this.getData().geoObject;
+
+            openBalloon(obj);
+          });
+        },
+      }
+    );
+
+    this.objectManager = new ymaps.ObjectManager({
+      clusterDisableClickZoom: true,
+      clusterize: true,
+      clusterBalloonItemContentLayout: customBalloonContentLayout,
+      clusterBalloonContentLayout: "cluster#balloonCarousel",
+    });
+
+    this.objectManager.objects.events.add("click", (e) => {
+      const obj = this.objectManager.objects.getById(e.get("objectId"));
+
+      this.currentCoords = obj.geometry.coordinates;
+    });
+
+    this.objectManager.clusters.events.add("click", async (e) => {
+      const cluster = this.objectManager.clusters.getById(e.get("objectId"));
+      const objs = cluster.properties.geoObjects;
+
+      this.currentCoords = objs[0].geometry.coordinates;
+    });
+
+    this.loadPlacemarks();
+
+    this.map.geoObjects.add(this.objectManager);
+  }
+
+  async onClick(e) {
+    if (this.map.balloon.isOpen()) {
+      this.map.balloon.close();
+      return;
     }
 
-    for (const item of coords) {
-      for (let i = 0; i < item.total; i++) {
-        this.map.createPlacemark(item.coords);
+    this.currentCoords = e.get("coords");
+
+    const address = await this.getAddress(this.currentCoords);
+    const layout = `
+      <div class="balloon">
+        <h4 class="balloon-address">${address}</h4>
+        ${this.formTemplate}
+      </div>
+    `;
+    this.map.balloon.open(this.currentCoords, {
+      content: layout,
+    });
+  }
+
+  async onDocumentClick(e) {
+    if (e.target.dataset.role === "review-add") {
+      const date = new Date().toLocaleDateString();
+      const review = {
+        name: document.querySelector("[data-role=review-name]").value,
+        place: document.querySelector("[data-role=review-place]").value,
+        text: document.querySelector("[data-role=review-text]").value,
+        date: date,
+        coords: this.currentCoords,
+      };
+
+      try {
+        await this.callApi("add", { coords: this.currentCoords, review });
+        const placemark = await this.createPlacemark(
+          this.currentCoords,
+          review
+        );
+        this.objectManager.add(placemark);
+        this.map.balloon.close();
+      } catch (e) {
+        const formError = document.querySelector(".form-error");
+        formError.innerText = e.message;
       }
     }
+  }
 
-    document.body.addEventListener("click", this.onDocumentClick.bind(this));
+  async getReviews(coords) {
+    let reviews = [];
+
+    try {
+      reviews = await this.callApi("list", { coords });
+    } catch (error) {
+      console.error("Failed to fetch data:", error.message);
+    }
+
+    console.log(reviews.forEach);
+    return reviews;
+  }
+
+  async openBalloon(obj) {
+    const objCoords = obj.geometry.coordinates;
+    const data = await this.getReviews(objCoords);
+    const address = await this.getAddress(objCoords);
+
+    const items = [];
+
+    data.forEach((review) => {
+      const layout = `
+        <li class="review-item">
+          <div class="review">
+          <div>
+            <b>${review.name}</b> <i>${review.date}</i> [${review.place}]
+          </div>
+          <div>${review.text}</div>
+          </div>
+        </li>
+      `;
+
+      items.push(layout);
+    });
+
+    const layout = `
+      <div class="balloon">
+        <h4 class="balloon-address">${address}</h4>
+        <ul class="review-list">
+          ${items.join("")}
+        </ul>
+        ${this.formTemplate}
+      </div>
+    `;
+
+    this.map.balloon.open(objCoords, layout);
   }
 
   async callApi(method, body = {}) {
@@ -38,61 +177,84 @@ export default class GeoReview {
     return await res.json();
   }
 
-  createForm(coords, reviews) {
-    const root = document.createElement("div");
-    root.innerHTML = this.formTemplate;
-    const reviewList = root.querySelector(".review-list");
-    const reviewForm = root.querySelector("[data-role=review-form]");
-    reviewForm.dataset.coords = JSON.stringify(coords);
+  injectYMaps() {
+    const script = document.createElement("script");
+    script.src = `https://api-maps.yandex.ru/2.1?apikey=424859b5-3734-4581-8981-69f15d4628ca&lang=ru_RU`;
+    script.addEventListener("load", () => {
+      ymaps.ready(this.onInit.bind(this));
+    });
 
-    for (const item of reviews) {
-      const div = document.createElement("div");
-      div.classList.add("review-item");
-      div.innerHTML = `
-            <div>
-            <b>${item.name}</b> [${item.place}]
-            </div>
-            <div>${item.text}</div>
-            `;
-      reviewList.appendChild(div);
-    }
-
-    return root;
+    document.body.appendChild(script);
   }
 
-  async onClick(coords) {
-    this.map.openBalloon(coords, "Загрузка...");
-    let list = [];
+  async loadPlacemarks() {
+    let coords = [];
+
     try {
-      list = await this.callApi("list", { coords });
+      coords = await this.callApi("coords");
     } catch (error) {
-      console.error("Failed to fetch reviews");
+      console.error("Failed to fetch coordinates:", error.message);
     }
-    const form = this.createForm(coords, list);
-    this.map.setBalloonContent(form.innerHTML);
+
+    coords.forEach(async (obj) => {
+      const coords = [Number(obj.coords[0]), Number(obj.coords[1])];
+      const reviews = await this.getReviews(coords);
+
+      reviews.forEach(async (review) => {
+        const placemark = await this.createPlacemark(coords, review);
+        this.objectManager.add(placemark);
+      });
+    });
   }
 
-  async onDocumentClick(e) {
-    if (e.target.dataset.role === "review-add") {
-      const reviewForm = document.querySelector("[data-role=review-form");
-      const coords = JSON.parse(reviewForm.dataset.coords);
-      const data = {
-        coords,
-        review: {
-          name: document.querySelector("[data-role=review-name]").value,
-          place: document.querySelector("[data-role=review-place]").value,
-          text: document.querySelector("[data-role=review-text]").value,
-        },
-      };
+  async getAddress(coords) {
+    try {
+      const res = await ymaps.geocode(coords);
+      const firstGeoObject = res.geoObjects.get(0);
 
-      try {
-        await this.callApi("add", data);
-        this.map.createPlacemark(coords);
-        this.map.closeBalloon();
-      } catch (e) {
-        const formError = document.querySelector(".form-error");
-        formError.innerText = e.message;
-      }
+      return firstGeoObject.getAddressLine();
+    } catch {
+      return "Не найдено";
     }
+  }
+
+  async createPlacemark(coords, data) {
+    const address = await this.getAddress(coords);
+
+    const layout = `
+      <div class="balloon">
+        <h4 class="balloon-address">${address}</h4>
+        <ul class="review-list">
+          <li class="review-item">
+            <div class="review">
+            <div>
+              <b>${data.name}</b> <i>${data.date}</i> [${data.place}]
+            </div>
+            <div>${data.text}</div>
+            </div>
+          </li>
+        </ul>
+        ${this.formTemplate}
+      </div>
+    `;
+
+    return {
+      id: this.currentId++,
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: coords,
+      },
+      properties: {
+        balloonContent: layout,
+        data: {
+          name: data.name,
+          place: data.place,
+          text: data.text,
+          date: data.date,
+          address: address,
+        },
+      },
+    };
   }
 }

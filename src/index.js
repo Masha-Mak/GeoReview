@@ -1,4 +1,3 @@
 import GeoReview from "./js/geoReview";
-import "./style.css";
 
-const app = new GeoReview();
+const app = new GeoReview("map");
